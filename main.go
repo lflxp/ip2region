@@ -1,13 +1,13 @@
 package main
 
 import (
-	"os"
-	"github.com/lflxp/ip2region/utils"
-	"github.com/gin-gonic/gin"
 	"bufio"
-	"fmt"
-	"strings"
 	"errors"
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"github.com/lflxp/ip2region/utils"
+	"os"
+	"strings"
 	"time"
 
 	"net/http"
@@ -18,31 +18,31 @@ var Region *utils.Ip2Region
 func init() {
 	//db := os.Args[1]
 	db := "./data/ip2region.db"
-	_,err:= os.Stat(db)
-	if os.IsNotExist(err){
+	_, err := os.Stat(db)
+	if os.IsNotExist(err) {
 		panic("not found db " + db)
 	}
-
+	//全局变量的坑 不能 := 否则是创建一个新的指针对象
 	Region, err = utils.New(db)
 	//defer Region.Close()
 
-	begin:= time.Now()
+	begin := time.Now()
 	ip := utils.IpInfo{}
 
 	ip, err = Region.BtreeSearch("8.8.8.8")
 
 	if err != nil {
-		fmt.Println( fmt.Sprintf("\x1b[0;31m%s\x1b[0m",err.Error()))
-	}else{
-		fmt.Println( fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m",ip.String(),time.Since(begin).String()))
+		fmt.Println(fmt.Sprintf("\x1b[0;31m%s\x1b[0m", err.Error()))
+	} else {
+		fmt.Println(fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m", ip.String(), time.Since(begin).String()))
 	}
 }
 
 func mains() {
 	db := os.Args[1]
 
-	_,err:= os.Stat(db)
-	if os.IsNotExist(err){
+	_, err := os.Stat(db)
+	if os.IsNotExist(err) {
 		panic("not found db " + db)
 	}
 
@@ -60,15 +60,15 @@ func mains() {
 	for {
 		fmt.Print("ip2reginon >> ")
 		data, _, _ := reader.ReadLine()
-		begin:= time.Now()
+		begin := time.Now()
 		commands := strings.Fields(string(data))
 		ip := utils.IpInfo{}
 		len := len(commands)
-		if len == 0{
+		if len == 0 {
 			continue
 		}
 
-		if commands[0] == "quit"{
+		if commands[0] == "quit" {
 			break
 		}
 
@@ -88,17 +88,15 @@ func mains() {
 
 		if err != nil {
 
-			fmt.Println( fmt.Sprintf("\x1b[0;31m%s\x1b[0m",err.Error()))
-		}else{
-			fmt.Println( fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m",ip.String(),time.Since(begin).String()))
+			fmt.Println(fmt.Sprintf("\x1b[0;31m%s\x1b[0m", err.Error()))
+		} else {
+			fmt.Println(fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m", ip.String(), time.Since(begin).String()))
 		}
 	}
 }
 
-
-
 func Test(this *gin.Context) {
-	this.String(http.StatusOK,"ok")
+	this.String(http.StatusOK, "ok")
 }
 
 //  "/checkip/type/ip"
@@ -112,16 +110,16 @@ func CheckIp(this *gin.Context) {
 	//
 	//Region, err := utils.New(db)
 	//defer Region.Close()
-	getip := this.Param("ip") //data
+	getip := this.Param("ip")   //data
 	types := this.Param("type") //commands[1]
 
 	//fmt.Println(getip,types)
-	begin:= time.Now()
+	begin := time.Now()
 
 	ip := utils.IpInfo{}
 	len := len(getip)
 	if len == 0 {
-		this.String(http.StatusNotFound,"nothing")
+		this.String(http.StatusNotFound, "nothing")
 	}
 
 	if types != "b-tree" || types != "binary" || types != "memory" {
@@ -140,21 +138,22 @@ func CheckIp(this *gin.Context) {
 
 	if err != nil {
 		//fmt.Println(err.Error())
-		this.String(http.StatusOK,err.Error())
-	}else{
+		this.String(http.StatusOK, err.Error())
+	} else {
 		//fmt.Println( fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m",ip.String(),time.Since(begin).String()))
-		this.String(http.StatusOK,ip.String()+" "+time.Since(begin).String())
+		this.String(http.StatusOK, ip.String()+" "+time.Since(begin).String())
 	}
 }
 
 func main() {
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-	r.GET("/",func(c *gin.Context){
-		c.JSON(200,gin.H{
-			"message":"Pong",
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "Pong",
 		})
 	})
-	r.GET("/test",Test)
-	r.GET("/checkip/:type/:ip",CheckIp)
-	r.Run()
+	r.GET("/test", Test)
+	r.GET("/checkip/:type/:ip", CheckIp)
+	r.Run(":8080")
 }
