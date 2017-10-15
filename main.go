@@ -14,8 +14,8 @@ import (
 
 var Region *utils.Ip2Region
 var Data *[]utils.Origin
-var Locations *[]utils.CityLocations
-var Asn *[]utils.AsnBlocks
+var Locations *map[string]utils.CityLocations
+var Asn *map[string]utils.AsnBlocks
 
 func init() {
 	//db := os.Args[1]
@@ -40,8 +40,8 @@ func init() {
 	}
 
 	Data = utils.LoadCityBlocksIpv4("./data/GeoLite2-City-Blocks-IPv4.csv")
-	Locations,_ = utils.GetCityLocations("./data/GeoLite2-City-Locations-zh-CN.csv")
-	Asn,_ = utils.GetAsnBlocks("./data/GeoLite2-ASN-Blocks-IPv4.csv")
+	Locations = utils.GetCityLocations2("./data/GeoLite2-City-Locations-zh-CN.csv")
+	Asn = utils.GetAsnBlocks2("./data/GeoLite2-ASN-Blocks-IPv4.csv")
 }
 
 func mains() {
@@ -159,16 +159,8 @@ func Check(this *gin.Context) {
 
 	var l utils.CityLocations
 	var a utils.AsnBlocks
-	for _,x := range *Locations {
-		if x.GeonameId == cityBlocks.Geoname_id {
-			l = x
-			for _,y := range *Asn {
-				if cityBlocks.Network == y.Network {
-					a = y
-				}
-			}
-		}
-	}
+	l = (*Locations)[cityBlocks.Geoname_id]
+	a = (*Asn)[cityBlocks.Network]
 	this.String(http.StatusOK,fmt.Sprintf("%d %s %s|%s|%s|%s|%s|%s",id,time.Since(begin).String(),l.ContinentName,l.CountryName,l.S1Name,l.S2Name,l.CityName,a.Autonomous_system_organization))
 }
 

@@ -115,6 +115,47 @@ func GetAsnBlocks(path string) (*[]AsnBlocks,*map[string]int) {
 	return &data,&index
 }
 
+func GetAsnBlocks2(path string) *map[string]AsnBlocks {
+	fmt.Println("开始读取AsnBlocks文件"+path)
+	data := map[string]AsnBlocks{}
+
+	//locations := map[string]string{}
+
+	file,err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	//读取数据到内存
+	//踢重 国家 城市 省份
+	for {
+
+		record,err := reader.Read()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			fmt.Println("Error:",err)
+			return nil
+		}
+		if record[0] != "network" {
+			//fmt.Println(record)
+			tmp := AsnBlocks{
+				Network:record[0],
+				Autonomous_system_number:record[1],
+				Autonomous_system_organization:record[2],
+			}
+			if record[1] != "" {
+				//locations[record[5]] = record[7]
+				data[tmp.Network] = tmp
+			}
+		}
+	}
+	fmt.Println("读取AsnBlocks文件完毕"+path)
+	return &data
+}
+
 func GetCityLocations(path string) (*[]CityLocations,*map[string]int) {
 	fmt.Println("开始读取CityLocations文件"+path)
 	index := map[string]int{}
@@ -168,6 +209,57 @@ func GetCityLocations(path string) (*[]CityLocations,*map[string]int) {
 	}
 	fmt.Println("读取CityLocations完毕")
 	return &data,&index
+}
+
+func GetCityLocations2(path string) *map[string]CityLocations {
+	fmt.Println("开始读取CityLocations文件"+path)
+	data := map[string]CityLocations{}
+
+	//locations := map[string]string{}
+
+	file,err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	//读取数据到内存
+	//踢重 国家 城市 省份
+	for {
+
+		record,err := reader.Read()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			fmt.Println("Error:",err)
+			return nil
+		}
+		if record[0] != "geoname_id" {
+			//fmt.Println(record)
+			tmp := CityLocations{
+				GeonameId:record[0],
+				LocaleCode:record[1],
+				ContinentCode:record[2],
+				ContinentName:record[3],
+				CountryIsoCode:record[4],
+				CountryName:record[5],
+				S1IsoCode:record[6],
+				S1Name:record[7],
+				S2IsoCode:record[6],
+				S2Name:record[9],
+				CityName:record[10],
+				MetroCode:record[11],
+				TimeZone:record[12],
+			}
+			if record[5] != "" {
+				//locations[record[5]] = record[7]
+				data[tmp.GeonameId] = tmp
+			}
+		}
+	}
+	fmt.Println("读取CityLocations完毕")
+	return &data
 }
 
 func GetCityBlocks(path string) *[]CityBlocks {
