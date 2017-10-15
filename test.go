@@ -1,5 +1,5 @@
 package main
-//
+
 //import "github.com/lflxp/ip2region/utils"
 //
 //func main() {
@@ -12,5 +12,6 @@ package main
 //	utils.WriteFile("./data/i.txt",data)
 //
 //	//生成Region
-//	utils.ReadRegion("./data","./data/g.csv")
+//	//utils.ReadRegion("./data","./data/g.csv")
+//	utils.ReadRegion2("./data","./data/g.csv")
 //}

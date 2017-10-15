@@ -263,7 +263,8 @@ func ReadBlocks(path string) []string {
 		} else if asn.Autonomous_system_organization == "" {
 			asn.Autonomous_system_organization = "0"
 		}
-		data = append(data,fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s,(%s,%s),%s",tmp.Min,tmp.Max,loc.ContinentName,loc.CountryName,loc.S1Name,loc.CityName,asn.Autonomous_system_organization,x.Latitude,x.Longitude,x.Accuracy_radius))
+		//data = append(data,fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s,(%s,%s),%s",tmp.Min,tmp.Max,loc.ContinentName,loc.CountryName,loc.S1Name,loc.CityName,asn.Autonomous_system_organization,x.Latitude,x.Longitude,x.Accuracy_radius))
+		data = append(data,fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s,(%s,%s),%s",tmp.Min,tmp.Max,loc.CountryName,loc.ContinentName,loc.S1Name,loc.CityName,asn.Autonomous_system_organization,x.Latitude,x.Longitude,x.Accuracy_radius))
 	}
 	fmt.Println("分析完毕")
 	return data
@@ -411,6 +412,71 @@ func ReadRegion(path string,writePath string) {
 					//lresult[DD4[city]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD4[city],DD3[sheng],city,4,0)
 					fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD4[city],DD3[sheng],city,4,0))
 				}
+			}
+		}
+	}
+
+	fmt.Println("写入完毕")
+}
+
+//from GeoLite2-City-Locations-zh-CN
+func ReadRegion2(path string,writePath string) {
+	//获取城市地域信息和索引
+	cityLocations,_ := GetCityLocations(path+"/GeoLite2-City-Locations-zh-CN.csv")
+	//国家
+	D2 := map[string][]string{}
+	//省
+	D3 := map[string][]string{}
+	//城市
+	D4 := map[string]string{}
+
+	//过滤数据
+	for _,x := range *cityLocations {
+		D2[x.CountryName] = append(D2[x.CountryName],x.S1Name)
+
+		D3[x.S1Name] = append(D3[x.S1Name],x.CityName)
+		D4[x.CityName] = x.CityName
+	}
+
+	/**
+	清洗数据
+	 */
+	cleanmap(&D2)
+	cleanmap(&D3)
+
+	//最终乱序字典
+	//lresult := map[string]string{}
+
+	fmt.Println("开始写入文件...")
+	fd,_:=os.OpenFile(writePath,os.O_RDWR|os.O_CREATE|os.O_APPEND,0644)
+	defer fd.Close()
+
+	//获取国家编号
+	DD2 := mapPx(D2)
+
+	//遍历国家名
+	for k,x := range DD2 {
+		//fmt.Println("国家 ",DD2[guojia],x,guojia,2,0)
+		//lresult[DD2[guojia]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD2[guojia],x,guojia,2,0)
+		fd.WriteString(fmt.Sprintf("%s,%d,%s,%d,%d\n",x,0,k,2,0))
+		//fmt.Println(fmt.Sprintf("%s,%d,%s,%d,%d\n",x,0,k,1,0))
+		//获取省编号
+		DD3 := mapPx(D3)
+
+		//遍历省
+		for _,sheng := range D2[k] {
+			//fmt.Println("省 ",DD3[sheng],DD2[guojia],sheng,3,0)
+			//lresult[DD3[sheng]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD3[sheng],DD2[guojia],sheng,3,0)
+			fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD3[sheng],x,sheng,3,0))
+			//fmt.Println(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD3[sheng],x,sheng,2,0))
+			//获取城市编号
+			DD4 := mapPx2(D4)
+			//遍历城市
+			for _,city := range D3[sheng] {
+				//fmt.Println("城市 ",DD4[city],DD3[sheng],city,4,0)
+				//lresult[DD4[city]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD4[city],DD3[sheng],city,4,0)
+				fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD4[city],DD3[sheng],city,4,0))
+				//fmt.Println(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD4[city],DD3[sheng],city,3,0))
 			}
 		}
 	}

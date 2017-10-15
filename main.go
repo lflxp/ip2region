@@ -13,6 +13,9 @@ import (
 )
 
 var Region *utils.Ip2Region
+var Data *[]utils.Origin
+var Locations *[]utils.CityLocations
+var Asn *[]utils.AsnBlocks
 
 func init() {
 	//db := os.Args[1]
@@ -35,6 +38,10 @@ func init() {
 	} else {
 		fmt.Println(fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m", ip.String(), time.Since(begin).String()))
 	}
+
+	Data = utils.LoadCityBlocksIpv4("./data/GeoLite2-City-Blocks-IPv4.csv")
+	Locations,_ = utils.GetCityLocations("./data/GeoLite2-City-Locations-zh-CN.csv")
+	Asn,_ = utils.GetAsnBlocks("./data/GeoLite2-ASN-Blocks-IPv4.csv")
 }
 
 func mains() {
@@ -126,7 +133,7 @@ func CheckIp(this *gin.Context) {
 	}
 	switch types {
 	case "b-tree":
-		ip, err = Region.(getip)
+		ip, err = Region.BtreeSearch(getip)
 	case "binary":
 		ip, err = Region.BinarySearch(getip)
 	case "memory":
@@ -144,6 +151,27 @@ func CheckIp(this *gin.Context) {
 	}
 }
 
+func Check(this *gin.Context) {
+	getip := this.Param("ip")
+	begin := time.Now()
+	id := utils.BinarySearchCityBlocksIPv4(Data,getip)
+	cityBlocks := (*Data)[id]
+
+	var l utils.CityLocations
+	var a utils.AsnBlocks
+	for _,x := range *Locations {
+		if x.GeonameId == cityBlocks.Geoname_id {
+			l = x
+			for _,y := range *Asn {
+				if cityBlocks.Network == y.Network {
+					a = y
+				}
+			}
+		}
+	}
+	this.String(http.StatusOK,fmt.Sprintf("%d %s %s|%s|%s|%s|%s|%s",id,time.Since(begin).String(),l.ContinentName,l.CountryName,l.S1Name,l.S2Name,l.CityName,a.Autonomous_system_organization))
+}
+
 func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
@@ -154,5 +182,6 @@ func main() {
 	})
 	r.GET("/test", Test)
 	r.GET("/checkip/:type/:ip", CheckIp)
+	r.GET("/check/:ip", Check)
 	r.Run(":8080")
 }
