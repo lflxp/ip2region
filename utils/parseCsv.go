@@ -6,12 +6,14 @@ package utils
 import (
 	"encoding/csv"
 	"fmt"
+	"bufio"
 	"io"
 	"os"
-	"sort"
 	"github.com/lflxp/cidr"
-	"time"
+	"strings"
 	"strconv"
+	"errors"
+	"time"
 )
 
 type CityLocations struct {
@@ -30,7 +32,11 @@ type CityLocations struct {
 	TimeZone 	string
 }
 
-type CityBlocks struct {
+type Origin struct {
+	Start 				int64
+	End 				int64
+	FirstIp				string
+	EndIp				string
 	Network 			string
 	Geoname_id 			string
 	Registered_country_geoname_id 	string
@@ -44,10 +50,22 @@ type CityBlocks struct {
 }
 
 type AsnBlocks struct {
+	Start 				int64
+	End 				int64
+	FirstIp				string
+	EndIp				string
 	Network 			string
 	Autonomous_system_number 	string
 	Autonomous_system_organization 	string
+}
 
+type JSON struct {
+	Ip 		string
+	Status 		string
+	Time 		string
+	Blocks  	Origin
+	Locations 	CityLocations
+	Asn 		AsnBlocks
 }
 
 func Reader(path string) {
@@ -70,85 +88,142 @@ func Reader(path string) {
 	}
 }
 
-func GetAsnBlocks(path string) (*[]AsnBlocks,*map[string]int) {
+//读取csv文件,初始化信息
+func NewOrigin(path string) (*[]Origin,*map[string]CityLocations,*[]AsnBlocks) {
+	Blocks := GetCityBlocksIpv4(path+"/GeoLite2-City-Blocks-IPv4.csv")
+	Locations := GetCityLocations(path+"/GeoLite2-City-Locations-zh-CN.csv")
+	Asn := GetAsnBlocks(path+"/GeoLite2-ASN-Blocks-IPv4.csv")
+	return Blocks,Locations,Asn
+}
+
+//根据给定的IP解析所有信息
+func ParseIp(data *[]Origin,locations *map[string]CityLocations,asn *[]AsnBlocks,ip string) *JSON {
+	begin := time.Now()
+	rs := JSON{}
+	rs.Ip = ip
+
+	id := BinarySearchCityBlocksIPv4(data,ip)
+	if id == -1 {
+		rs.Time = time.Since(begin).String()
+		rs.Status = fmt.Sprintf("%s 查无此IP,请确认是否为内网IP",ip)
+		return &rs
+	} else {
+		rs.Blocks = (*data)[id]
+		rs.Locations = (*locations)[rs.Blocks.Geoname_id]
+	}
+
+	asnId := BinarySearchAsnIPv4(asn,ip)
+	if asnId == -1 {
+		rs.Status = fmt.Sprintf("%s 无法查询网络运营商,请确认是否为内网IP",ip)
+	} else {
+		rs.Asn = (*asn)[asnId]
+	}
+	rs.Status = "Successfully"
+	rs.Time = time.Since(begin).String()
+	return &rs
+}
+
+//二分法查询Asn
+func BinarySearchAsnIPv4(data *[]AsnBlocks,ip string) int {
+	lo,hi := 0,len(*data)-1
+	k,err := ip2long(ip)
+	//fmt.Println("ip ",ip,k)
+	if err != nil {
+		fmt.Println(err.Error())
+		panic(err)
+	}
+	for lo <= hi {
+		m := (lo+hi)>>1
+		//fmt.Println(m,k,(*data)[m].Start,(*data)[m].End,(*data)[m].FirstIp,(*data)[m].EndIp)
+		if (*data)[m].Start < k {
+			if (*data)[m].End < k {
+				lo = m + 1
+			} else if (*data)[m].End > k {
+				return m
+			}
+		} else if (*data)[m].Start > k {
+			hi = m - 1
+		} else {
+			return m
+		}
+	}
+	return -1
+}
+
+//通过二分法解析ip对应的ip段
+//切片s是升序的
+//k为待查找的整数
+//如果查到有就返回对应角标,
+//没有就返回-1
+func BinarySearchCityBlocksIPv4(data *[]Origin,ip string) int {
+	lo,hi := 0,len(*data)-1
+	k,err := ip2long(ip)
+	//fmt.Println("ip ",ip,k)
+	if err != nil {
+		fmt.Println(err.Error())
+		panic(err)
+	}
+	for lo <= hi {
+		m := (lo+hi)>>1
+		//fmt.Println(m,k,(*data)[m].Start,(*data)[m].End,(*data)[m].FirstIp,(*data)[m].EndIp)
+		if (*data)[m].Start < k {
+			if (*data)[m].End < k {
+				lo = m + 1
+			} else if (*data)[m].End > k {
+				return m
+			}
+		} else if (*data)[m].Start > k {
+			hi = m - 1
+		} else {
+			return m
+		}
+	}
+	return -1
+}
+
+func GetAsnBlocks(path string) *[]AsnBlocks {
 	fmt.Println("开始读取AsnBlocks文件"+path)
-	index := map[string]int{}
-	num := 0
 	data := []AsnBlocks{}
 
 	//locations := map[string]string{}
 
-	file,err := os.Open(path)
-	if err != nil {
-		panic(err)
+	inputFile, inputError := os.Open(path)
+	if inputError != nil {
+		fmt.Printf("An error occurred on opening the inputfile\n" +
+		    "Does the file exist?\n" +
+		    "Have you got acces to it?\n")
+		return nil
 	}
-	defer file.Close()
+	defer inputFile.Close()
 
-	reader := csv.NewReader(file)
+	inputReader := bufio.NewReader(inputFile)
 	//读取数据到内存
 	//踢重 国家 城市 省份
 	for {
 
-		record,err := reader.Read()
-		if err == io.EOF {
+		inputString, readerError := inputReader.ReadString('\n')
+		if readerError == io.EOF {
 			break
-		} else if err != nil {
-			fmt.Println("Error:",err)
-			return nil,nil
-		}
-		if record[0] != "network" {
-			//fmt.Println(record)
-			tmp := AsnBlocks{
-				Network:record[0],
-				Autonomous_system_number:record[1],
-				Autonomous_system_organization:record[2],
-			}
-			if record[1] != "" {
-				//locations[record[5]] = record[7]
-				index[record[0]] = num
-				data = append(data,tmp)
-				num += 1
-			}
-		}
-	}
-	fmt.Println("读取AsnBlocks文件完毕"+path)
-	return &data,&index
-}
-
-func GetAsnBlocks2(path string) *map[string]AsnBlocks {
-	fmt.Println("开始读取AsnBlocks文件"+path)
-	data := map[string]AsnBlocks{}
-
-	//locations := map[string]string{}
-
-	file,err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	//读取数据到内存
-	//踢重 国家 城市 省份
-	for {
-
-		record,err := reader.Read()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			fmt.Println("Error:",err)
+		} else if readerError != nil {
+			fmt.Println("Error:",readerError)
 			return nil
 		}
+		record := strings.Split(strings.Replace(inputString,"\"","",-1),",")
 		if record[0] != "network" {
 			//fmt.Println(record)
-			tmp := AsnBlocks{
-				Network:record[0],
-				Autonomous_system_number:record[1],
-				Autonomous_system_organization:record[2],
-			}
+			count := cidr.NewCidr(record[0]).GetCidrIpRange()
+			tmp := AsnBlocks{}
+			tmp.Start,_ = ip2long(count.Min)
+			tmp.End,_ = ip2long(count.Max)
+			tmp.FirstIp = count.Min
+			tmp.EndIp = count.Max
+			tmp.Network = record[0]
+			tmp.Autonomous_system_number = record[1]
+			tmp.Autonomous_system_organization = record[2]
+
 			if record[1] != "" {
 				//locations[record[5]] = record[7]
-				data[tmp.Network] = tmp
+				data = append(data,tmp)
 			}
 		}
 	}
@@ -156,85 +231,36 @@ func GetAsnBlocks2(path string) *map[string]AsnBlocks {
 	return &data
 }
 
-func GetCityLocations(path string) (*[]CityLocations,*map[string]int) {
-	fmt.Println("开始读取CityLocations文件"+path)
-	index := map[string]int{}
-	num := 0
-	data := []CityLocations{}
-
-	//locations := map[string]string{}
-
-	file,err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	//读取数据到内存
-	//踢重 国家 城市 省份
-	for {
-
-		record,err := reader.Read()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			fmt.Println("Error:",err)
-			return nil,nil
-		}
-		if record[0] != "geoname_id" {
-			//fmt.Println(record)
-			tmp := CityLocations{
-				GeonameId:record[0],
-				LocaleCode:record[1],
-				ContinentCode:record[2],
-				ContinentName:record[3],
-				CountryIsoCode:record[4],
-				CountryName:record[5],
-				S1IsoCode:record[6],
-				S1Name:record[7],
-				S2IsoCode:record[6],
-				S2Name:record[9],
-				CityName:record[10],
-				MetroCode:record[11],
-				TimeZone:record[12],
-			}
-			if record[5] != "" {
-				//locations[record[5]] = record[7]
-				index[record[0]] = num
-				data = append(data,tmp)
-				num += 1
-			}
-		}
-	}
-	fmt.Println("读取CityLocations完毕")
-	return &data,&index
-}
-
-func GetCityLocations2(path string) *map[string]CityLocations {
+func GetCityLocations(path string) *map[string]CityLocations {
 	fmt.Println("开始读取CityLocations文件"+path)
 	data := map[string]CityLocations{}
 
 	//locations := map[string]string{}
 
-	file,err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
+	//locations := map[string]string{}
 
-	reader := csv.NewReader(file)
+	inputFile, inputError := os.Open(path)
+	if inputError != nil {
+		fmt.Printf("An error occurred on opening the inputfile\n" +
+		    "Does the file exist?\n" +
+		    "Have you got acces to it?\n")
+		return nil
+	}
+	defer inputFile.Close()
+
+	inputReader := bufio.NewReader(inputFile)
 	//读取数据到内存
 	//踢重 国家 城市 省份
 	for {
 
-		record,err := reader.Read()
-		if err == io.EOF {
+		inputString, readerError := inputReader.ReadString('\n')
+		if readerError == io.EOF {
 			break
-		} else if err != nil {
-			fmt.Println("Error:",err)
+		} else if readerError != nil {
+			fmt.Println("Error:",readerError)
 			return nil
 		}
+		record := strings.Split(strings.Replace(inputString,"\"","",-1),",")
 		if record[0] != "geoname_id" {
 			//fmt.Println(record)
 			tmp := CityLocations{
@@ -262,104 +288,58 @@ func GetCityLocations2(path string) *map[string]CityLocations {
 	return &data
 }
 
-func GetCityBlocks(path string) *[]CityBlocks {
-	data := []CityBlocks{}
-	fmt.Println("开始读取CityBlocks文件"+path)
-	file,err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
 
-	reader := csv.NewReader(file)
+//解析数据
+func GetCityBlocksIpv4(path string) *[]Origin {
+	result := []Origin{}
+	fmt.Println("开始读取CityBlocks文件"+path)
+	//locations := map[string]string{}
+
+	inputFile, inputError := os.Open(path)
+	if inputError != nil {
+		fmt.Printf("An error occurred on opening the inputfile\n" +
+		    "Does the file exist?\n" +
+		    "Have you got acces to it?\n")
+		return nil
+	}
+	defer inputFile.Close()
+
+	inputReader := bufio.NewReader(inputFile)
 	//读取数据到内存
 	//踢重 国家 城市 省份
-	num :=0
 	for {
-		record,err := reader.Read()
-		if err == io.EOF {
+
+		inputString, readerError := inputReader.ReadString('\n')
+		if readerError == io.EOF {
 			break
-		} else if err != nil {
-			fmt.Println("Error:",err)
+		} else if readerError != nil {
+			fmt.Println("Error:",readerError)
 			return nil
 		}
+		record := strings.Split(strings.Replace(inputString,"\"","",-1),",")
 		if record[0] != "network" {
-			//fmt.Println(record)
-			tmp := CityBlocks{
-				Network:record[0],
-				Geoname_id:record[1],
-				Registered_country_geoname_id:record[2],
-				Represented_country_geoname_id:record[3],
-				Is_anonymous_proxy:record[4],
-				Is_satellite_provider:record[5],
-				Postal_code:record[6],
-				Latitude:record[7],
-				Longitude:record[6],
-				Accuracy_radius:record[9],
-			}
-			if record[5] != "" {
-				data = append(data,tmp)
-			}
+			tmp := Origin{}
+			count := cidr.NewCidr(record[0]).GetCidrIpRange()
+			tmp.Start,_ = ip2long(count.Min)
+			tmp.End,_ = ip2long(count.Max)
+			tmp.FirstIp = count.Min
+			tmp.EndIp = count.Max
+			tmp.Network = record[0]
+			tmp.Geoname_id = record[1]
+			tmp.Registered_country_geoname_id = record[2]
+			tmp.Represented_country_geoname_id = record[3]
+			tmp.Is_anonymous_proxy = record[4]
+			tmp.Is_satellite_provider = record[5]
+			tmp.Postal_code = record[6]
+			tmp.Latitude = record[7]
+			tmp.Longitude = record[8]
+			tmp.Accuracy_radius = record[9]
+			//fmt.Println("start ",record[0],count.Min,count.Max,tmp.Start)
+			result = append(result,tmp)
 		}
-		num += 1
 	}
-	fmt.Println(fmt.Sprintf("CityBlocks 读取完毕"))
-	return &data
-}
-
-//func DeleteMore(a *[]CityLocations,b []string) []string {
-//	//第一层
-//	//country[x] = strconv.Itoa(n)
-//	fmt.Println(n+1,0,x,1,0)
-//	S1 := []string{}
-//	//去重
-//	tmp1 := map[string]string{}
-//	for _,xx := range data {
-//		if x == xx.CountryName {
-//			tmp1[xx.S1Name] = xx.S1Name
-//		}
-//	}
-//	//排序
-//	for k,_ := range tmp1 {
-//		S1 = append(S1,k)
-//	}
-//	//第二层
-//	sort.Strings(S1)
-//	for _,xxx := range S1 {
-//		fmt.Println(len(Countrys) + n + 1, n + 1, xxx, 2, 0)
-//	}
-//}
-
-func ReadBlocks(path string) []string {
-	data := []string{}
-	//获取城市ip端信息
-	cityBlocks := GetCityBlocks(path+"/GeoLite2-City-Blocks-IPv4.csv")
-	//获取城市地域信息和索引
-	cityLocations,index := GetCityLocations(path+"/GeoLite2-City-Locations-zh-CN.csv")
-
-	asnBlocks,bindex := GetAsnBlocks(path+"/GeoLite2-ASN-Blocks-IPv4.csv")
-
-	fmt.Println("开始解析文件致ip2region")
-	for _,x := range *cityBlocks {
-		tmp := cidr.NewCidr(x.Network).GetCidrIpRange()
-		//获取geoname_id 查询城市地域信息
-		ind := (*index)[x.Geoname_id]
-		loc := (*cityLocations)[ind]
-		//获取asn
-		aind := (*bindex)[x.Network]
-		asn := (*asnBlocks)[aind]
-		if loc.S1Name == "" {
-			loc.S1Name = "0"
-		} else if loc.CityName == "" {
-			loc.CityName = "0"
-		} else if asn.Autonomous_system_organization == "" {
-			asn.Autonomous_system_organization = "0"
-		}
-		//data = append(data,fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s,(%s,%s),%s",tmp.Min,tmp.Max,loc.ContinentName,loc.CountryName,loc.S1Name,loc.CityName,asn.Autonomous_system_organization,x.Latitude,x.Longitude,x.Accuracy_radius))
-		data = append(data,fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s,(%s,%s),%s",tmp.Min,tmp.Max,loc.CountryName,loc.ContinentName,loc.S1Name,loc.CityName,asn.Autonomous_system_organization,x.Latitude,x.Longitude,x.Accuracy_radius))
-	}
-	fmt.Println("分析完毕")
-	return data
+	fmt.Println("读取完毕CityBlocks文件")
+	return &result
 }
 
 func WriteFile(path string,info []string) {
@@ -375,203 +355,30 @@ func WriteFile(path string,info []string) {
 	fmt.Println("写入完毕")
 }
 
-/**
- * 数组去重 去空
- */
-func removeDuplicatesAndEmpty(a []string) *[]string {
-    	tmp := map[string]string{}
-	for _,x := range a {
-		if x != "" {
-			tmp[x] = x
-		}
-	}
-	rs := []string{}
-	for k,_ := range tmp {
-		rs = append(rs,k)
-	}
-	sort.Strings(rs)
-	return &rs
+
+
+func getLong(b []byte, offset int64) int64 {
+
+	val := (int64(b[offset]) |
+		int64(b[offset+1])<<8 |
+		int64(b[offset+2])<<16 |
+		int64(b[offset+3])<<24)
+
+	return val
+
 }
 
-//字段排序
-func mapPx(data map[string][]string) map[string]string {
-	result := []string{}
-	for k,_ := range data {
-		result = append(result,k)
-	}
-	sort.Strings(result)
-
-	tmp := map[string]string{}
-	for _,x := range result {
-		//w := md5.New()
-		//io.WriteString(w, x)   //将str写入到w中
-		//tmp[x] = fmt.Sprintf("%x", w.Sum(nil))  //w.Sum(nil)将w的hash转成[]byte格式
-		tmp[x] = strconv.Itoa(time.Now().Nanosecond())
-	}
-	return tmp
-}
-
-//字段排序
-func mapPx2(data map[string]string) map[string]string {
-	result := []string{}
-	for k,_ := range data {
-		result = append(result,k)
-	}
-	sort.Strings(result)
-
-	tmp := map[string]string{}
-	for _,x := range result {
-		//w := md5.New()
-		//io.WriteString(w, x)   //将str写入到w中
-		//tmp[x] = fmt.Sprintf("%x", w.Sum(nil))  //w.Sum(nil)将w的hash转成[]byte格式
-		tmp[x] = strconv.Itoa(time.Now().Nanosecond())
-	}
-	return tmp
-}
-
-
-func cleanmap(info *map[string][]string) {
-	for k,x := range *info {
-		(*info)[k] = *removeDuplicatesAndEmpty(x)
-	}
-}
-
-//from GeoLite2-City-Locations-zh-CN
-func ReadRegion(path string,writePath string) {
-	//获取城市地域信息和索引
-	cityLocations,_ := GetCityLocations(path+"/GeoLite2-City-Locations-zh-CN.csv")
-	//大陆板块
-	D1 := map[string][]string{}
-	//国家
-	D2 := map[string][]string{}
-	//省
-	D3 := map[string][]string{}
-	//城市
-	D4 := map[string]string{}
-
-	//过滤数据
-	for _,x := range *cityLocations {
-		D1[x.ContinentName] = append(D1[x.ContinentName],x.CountryName)
-
-		D2[x.CountryName] = append(D2[x.CountryName],x.S1Name)
-
-		D3[x.S1Name] = append(D3[x.S1Name],x.CityName)
-		D4[x.CityName] = x.CityName
+func ip2long(IpStr string) (int64, error) {
+	bits := strings.Split(IpStr, ".")
+	if len(bits) != 4 {
+		return 0, errors.New("ip format error")
 	}
 
-	/**
-	清洗数据
-	 */
-	cleanmap(&D1)
-	cleanmap(&D2)
-	cleanmap(&D3)
-
-	//最终乱序字典
-	//lresult := map[string]string{}
-
-	fmt.Println("开始写入文件...")
-	fd,_:=os.OpenFile(writePath,os.O_RDWR|os.O_CREATE|os.O_APPEND,0644)
-	defer fd.Close()
-
-	DD1 := mapPx(D1)
-	for k,x := range DD1 {
-		//k 大洲名称
-		//x 大洲编号
-		//fmt.Println("大洲 ",x,0,k,1,0)
-		//lresult[x] = fmt.Sprintf("%s,%d,%s,%d,%d",x,0,k,1,0)
-		fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",x,0,k,1,0))
-		//获取国家编号
-		DD2 := mapPx(D2)
-
-		//遍历国家名
-		for _,guojia := range D1[k] {
-			//fmt.Println("国家 ",DD2[guojia],x,guojia,2,0)
-			//lresult[DD2[guojia]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD2[guojia],x,guojia,2,0)
-			fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD2[guojia],x,guojia,2,0))
-			//获取省编号
-			DD3 := mapPx(D3)
-
-			//遍历省
-			for _,sheng := range D2[guojia] {
-				//fmt.Println("省 ",DD3[sheng],DD2[guojia],sheng,3,0)
-				//lresult[DD3[sheng]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD3[sheng],DD2[guojia],sheng,3,0)
-				fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD3[sheng],DD2[guojia],sheng,3,0))
-				//获取城市编号
-				DD4 := mapPx2(D4)
-				//遍历城市
-				for _,city := range D3[sheng] {
-					//fmt.Println("城市 ",DD4[city],DD3[sheng],city,4,0)
-					//lresult[DD4[city]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD4[city],DD3[sheng],city,4,0)
-					fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD4[city],DD3[sheng],city,4,0))
-				}
-			}
-		}
+	var sum int64
+	for i, n := range bits {
+		bit, _ := strconv.ParseInt(n, 10, 64)
+		sum += bit << uint(24-8*i)
 	}
 
-	fmt.Println("写入完毕")
-}
-
-//from GeoLite2-City-Locations-zh-CN
-func ReadRegion2(path string,writePath string) {
-	//获取城市地域信息和索引
-	cityLocations,_ := GetCityLocations(path+"/GeoLite2-City-Locations-zh-CN.csv")
-	//国家
-	D2 := map[string][]string{}
-	//省
-	D3 := map[string][]string{}
-	//城市
-	D4 := map[string]string{}
-
-	//过滤数据
-	for _,x := range *cityLocations {
-		D2[x.CountryName] = append(D2[x.CountryName],x.S1Name)
-
-		D3[x.S1Name] = append(D3[x.S1Name],x.CityName)
-		D4[x.CityName] = x.CityName
-	}
-
-	/**
-	清洗数据
-	 */
-	cleanmap(&D2)
-	cleanmap(&D3)
-
-	//最终乱序字典
-	//lresult := map[string]string{}
-
-	fmt.Println("开始写入文件...")
-	fd,_:=os.OpenFile(writePath,os.O_RDWR|os.O_CREATE|os.O_APPEND,0644)
-	defer fd.Close()
-
-	//获取国家编号
-	DD2 := mapPx(D2)
-
-	//遍历国家名
-	for k,x := range DD2 {
-		//fmt.Println("国家 ",DD2[guojia],x,guojia,2,0)
-		//lresult[DD2[guojia]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD2[guojia],x,guojia,2,0)
-		fd.WriteString(fmt.Sprintf("%s,%d,%s,%d,%d\n",x,0,k,2,0))
-		//fmt.Println(fmt.Sprintf("%s,%d,%s,%d,%d\n",x,0,k,1,0))
-		//获取省编号
-		DD3 := mapPx(D3)
-
-		//遍历省
-		for _,sheng := range D2[k] {
-			//fmt.Println("省 ",DD3[sheng],DD2[guojia],sheng,3,0)
-			//lresult[DD3[sheng]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD3[sheng],DD2[guojia],sheng,3,0)
-			fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD3[sheng],x,sheng,3,0))
-			//fmt.Println(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD3[sheng],x,sheng,2,0))
-			//获取城市编号
-			DD4 := mapPx2(D4)
-			//遍历城市
-			for _,city := range D3[sheng] {
-				//fmt.Println("城市 ",DD4[city],DD3[sheng],city,4,0)
-				//lresult[DD4[city]] = fmt.Sprintf("%s,%d,%s,%d,%d",DD4[city],DD3[sheng],city,4,0)
-				fd.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD4[city],DD3[sheng],city,4,0))
-				//fmt.Println(fmt.Sprintf("%s,%s,%s,%d,%d\n",DD4[city],DD3[sheng],city,3,0))
-			}
-		}
-	}
-
-	fmt.Println("写入完毕")
+	return sum, nil
 }

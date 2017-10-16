@@ -1,167 +1,72 @@
 package main
 
 import (
-	"bufio"
-	"errors"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/lflxp/ip2region/utils"
-	"os"
-	"strings"
-	"time"
+	"flag"
 	"net/http"
 )
 
-var Region *utils.Ip2Region
 var Data *[]utils.Origin
 var Locations *map[string]utils.CityLocations
-var Asn *map[string]utils.AsnBlocks
+var Asn *[]utils.AsnBlocks
+var path = flag.String("path", "./data", "GeoIP2 文件目录")
 
 func init() {
-	//db := os.Args[1]
-	db := "./data/ip2region.db"
-	_, err := os.Stat(db)
-	if os.IsNotExist(err) {
-		panic("not found db " + db)
-	}
-	//全局变量的坑 不能 := 否则是创建一个新的指针对象
-	Region, err = utils.New(db)
-	//defer Region.Close()
-
-	begin := time.Now()
-	ip := utils.IpInfo{}
-
-	ip, err = Region.BtreeSearch("8.8.8.8")
-
-	if err != nil {
-		fmt.Println(fmt.Sprintf("\x1b[0;31m%s\x1b[0m", err.Error()))
-	} else {
-		fmt.Println(fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m", ip.String(), time.Since(begin).String()))
-	}
-
-	Data = utils.LoadCityBlocksIpv4("./data/GeoLite2-City-Blocks-IPv4.csv")
-	Locations = utils.GetCityLocations2("./data/GeoLite2-City-Locations-zh-CN.csv")
-	Asn = utils.GetAsnBlocks2("./data/GeoLite2-ASN-Blocks-IPv4.csv")
-}
-
-func mains() {
-	db := os.Args[1]
-
-	_, err := os.Stat(db)
-	if os.IsNotExist(err) {
-		panic("not found db " + db)
-	}
-
-	region, err := utils.New(db)
-	defer region.Close()
-	fmt.Println(`initializing
-+-------------------------------------------------------+
-| ip2region test script                                 |
-| format 'ip type'                                      |
-| type option 'b-tree','binary','memory' default b-tree |
-| Type 'quit' to exit program                           |
-+-------------------------------------------------------+`)
-
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Print("ip2reginon >> ")
-		data, _, _ := reader.ReadLine()
-		begin := time.Now()
-		commands := strings.Fields(string(data))
-		ip := utils.IpInfo{}
-		len := len(commands)
-		if len == 0 {
-			continue
-		}
-
-		if commands[0] == "quit" {
-			break
-		}
-
-		if !(len > 1) {
-			commands = append(commands, "b-tree")
-		}
-		switch commands[1] {
-		case "b-tree":
-			ip, err = region.BtreeSearch(commands[0])
-		case "binary":
-			ip, err = region.BinarySearch(commands[0])
-		case "memory":
-			ip, err = region.MemorySearch(commands[0])
-		default:
-			err = errors.New("parameter error")
-		}
-
-		if err != nil {
-
-			fmt.Println(fmt.Sprintf("\x1b[0;31m%s\x1b[0m", err.Error()))
-		} else {
-			fmt.Println(fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m", ip.String(), time.Since(begin).String()))
-		}
-	}
+	flag.Parse()
+	Data, Locations, Asn = utils.NewOrigin(*path)
 }
 
 func Test(this *gin.Context) {
 	this.String(http.StatusOK, "ok")
 }
 
-//  "/checkip/type/ip"
-func CheckIp(this *gin.Context) {
-	var err error
-	//db := "./data/ip2region.db"
-	//_,err:= os.Stat(db)
-	//if os.IsNotExist(err){
-	//	panic("not found db " + db)
-	//}
-	//
-	//Region, err := utils.New(db)
-	//defer Region.Close()
-	getip := this.Param("ip")   //data
-	types := this.Param("type") //commands[1]
-
-	//fmt.Println(getip,types)
-	begin := time.Now()
-
-	ip := utils.IpInfo{}
-	len := len(getip)
-	if len == 0 {
-		this.String(http.StatusNotFound, "nothing")
-	}
-
-	if types != "b-tree" || types != "binary" || types != "memory" {
-		types = "b-tree"
-	}
-	switch types {
-	case "b-tree":
-		ip, err = Region.BtreeSearch(getip)
-	case "binary":
-		ip, err = Region.BinarySearch(getip)
-	case "memory":
-		ip, err = Region.MemorySearch(getip)
-	default:
-		err = errors.New("parameter error")
-	}
-
-	if err != nil {
-		//fmt.Println(err.Error())
-		this.String(http.StatusOK, err.Error())
-	} else {
-		//fmt.Println( fmt.Sprintf("\x1b[0;32m%s  %s\x1b[0m",ip.String(),time.Since(begin).String()))
-		this.String(http.StatusOK, ip.String()+" "+time.Since(begin).String())
-	}
-}
-
 func Check(this *gin.Context) {
 	getip := this.Param("ip")
-	begin := time.Now()
-	id := utils.BinarySearchCityBlocksIPv4(Data,getip)
-	cityBlocks := (*Data)[id]
-
-	var l utils.CityLocations
-	var a utils.AsnBlocks
-	l = (*Locations)[cityBlocks.Geoname_id]
-	a = (*Asn)[cityBlocks.Network]
-	this.String(http.StatusOK,fmt.Sprintf("%d %s %s|%s|%s|%s|%s|%s",id,time.Since(begin).String(),l.ContinentName,l.CountryName,l.S1Name,l.S2Name,l.CityName,a.Autonomous_system_organization))
+	json := utils.ParseIp(Data, Locations, Asn, getip)
+	this.JSON(http.StatusOK, gin.H{
+		"time": json.Time,
+		"ip":json.Ip,
+		"GeoIP":gin.H{
+			"Locations":gin.H{
+				"Geoname_id":json.Locations.GeonameId,
+				"LocaleCode":json.Locations.LocaleCode,
+				"ContinentCode":json.Locations.ContinentCode,
+				"ContinentName":json.Locations.ContinentName,
+				"CountryIsoCode":json.Locations.CountryIsoCode,
+				"CountryName":json.Locations.CountryName,
+				"S1IsoCode":json.Locations.S1IsoCode,
+				"S1Name":json.Locations.S1Name,
+				"S2IsoCode":json.Locations.S2IsoCode,
+				"S2Name":json.Locations.S2Name,
+				"CityName":json.Locations.CityName,
+				"MetroCode":json.Locations.MetroCode,
+				"TimeZone":json.Locations.TimeZone,
+			},
+			"Blocks":gin.H{
+				"Start":json.Blocks.Start,
+				"End":json.Blocks.End,
+				"FirstIp":json.Blocks.FirstIp,
+				"EndIp":json.Blocks.EndIp,
+				"Network":json.Blocks.Network,
+				"Geoname_id":json.Blocks.Geoname_id,
+				"Registered_country_geoname_id":json.Blocks.Registered_country_geoname_id,
+				"Represented_country_geoname_id":json.Blocks.Represented_country_geoname_id,
+				"Is_anonymous_proxy":json.Blocks.Is_anonymous_proxy,
+				"Is_satellite_provider":json.Blocks.Is_satellite_provider,
+				"Postal_code":json.Blocks.Postal_code,
+				"Latitude":json.Blocks.Latitude,
+				"Longitude":json.Blocks.Longitude,
+				"Accuracy_radius":json.Blocks.Accuracy_radius,
+			},
+			"Asn":gin.H{
+				"Network":json.Asn.Network,
+				"Autonomous_system_number":json.Asn.Autonomous_system_number,
+				"Autonomous_system_organization":json.Asn.Autonomous_system_organization,
+			},
+		},
+		"status":json.Status,
+	})
 }
 
 func main() {
@@ -173,7 +78,6 @@ func main() {
 		})
 	})
 	r.GET("/test", Test)
-	r.GET("/checkip/:type/:ip", CheckIp)
 	r.GET("/check/:ip", Check)
 	r.Run(":8080")
 }

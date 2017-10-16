@@ -44,6 +44,12 @@
 			"revisionTime": "2017-10-10T00:57:02Z"
 		},
 		{
+			"checksumSHA1": "l+uydxZQmVd0WEvlY+silsIQuew=",
+			"path": "github.com/lflxp/cidr",
+			"revision": "c0e983bccaa76e095094ba4f6687cc5ede1be386",
+			"revisionTime": "2017-10-13T07:19:20Z"
+		},
+		{
 			"checksumSHA1": "U6lX43KDDlNOn+Z0Yyww+ZzHfFo=",
 			"path": "github.com/mattn/go-isatty",
 			"revision": ""
